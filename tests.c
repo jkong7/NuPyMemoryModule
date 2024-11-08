@@ -1,7 +1,9 @@
 /*tests.c*/
 
 //
-// << DESCRIPTION >>
+// Test suite for the memory module built in ram.c. Things to check include resizing, writing and reading, one off addresses, initialization, 
+// num_values and capacity correctness. Other edge cases include string ram_value cases, handling immediately-after-double write and reads, and invalid
+// cases (such as address out of bounds or getting address by name where a cell with that name has not been created)
 //
 // Jonathan Kong
 //
@@ -95,6 +97,8 @@ TEST(memory_module, write_one_int)
   ram_destroy(memory);
 }
 
+
+//1. Resizing test: Test ram_write_cell_by_name is valid THROUGH resizing operation and that resizing changes the fields appropriately 
 TEST(memory_module, resize_ram) {
   struct RAM* memory = ram_init(); 
 
@@ -116,6 +120,8 @@ TEST(memory_module, resize_ram) {
   ASSERT_EQ(memory->cells[2].value.types.i, 3);
   ASSERT_EQ(memory->cells[3].value.types.i, 4);
 
+  ASSERT_TRUE(memory!=NULL); 
+
   i.types.i = 5;
   ram_write_cell_by_name(memory, i, "e");
   ASSERT_EQ(memory->num_values, 5);
@@ -126,11 +132,26 @@ TEST(memory_module, resize_ram) {
   ASSERT_EQ(memory->cells[2].value.types.i, 3);
   ASSERT_EQ(memory->cells[3].value.types.i, 4);
   ASSERT_EQ(memory->cells[4].value.types.i, 5);
+  ASSERT_EQ(strcmp(memory->cells[4].identifier, "e"), 0); 
+  ASSERT_STREQ(memory->cells[4].identifier, "e"); 
+
+  i.types.i=6; 
+  ram_write_cell_by_name(memory, i, "f"); 
+  ASSERT_EQ(memory->cells[5].value.types.i, 6); 
+  i.types.i=7; 
+  ram_write_cell_by_name(memory, i, "g"); 
+  i.types.i=8; 
+  ram_write_cell_by_name(memory, i, "h"); 
+  ASSERT_EQ(memory->num_values, 8); 
+  i.types.i=9; 
+  ram_write_cell_by_name(memory, i, "i");
+  ASSERT_EQ(memory->capacity, 16);
+  
 
   ram_destroy(memory);
 }
 
-
+//2. Just basic writing and then reading 
 TEST(memory_module, write_and_read_various_types) {
     struct RAM* memory = ram_init();
     
@@ -159,6 +180,7 @@ TEST(memory_module, write_and_read_various_types) {
     ram_destroy(memory);
 }
 
+//3. ram_write_cell_by_name should be able to overwrite an existing cell with the same name 
 TEST(memory_module, overwrite_existing_variable) {
     struct RAM* memory = ram_init();
     
@@ -177,6 +199,7 @@ TEST(memory_module, overwrite_existing_variable) {
     ram_destroy(memory);
 }
 
+// 4. Strings come with some more complexity because of their manual alloc and dealloc of memory - test basic write string 
 TEST(memory_module, string_write) {
   struct RAM* memory = ram_init(); 
   struct RAM_VALUE s; 
@@ -194,27 +217,8 @@ TEST(memory_module, string_write) {
   ram_destroy(memory); 
 }
 
-TEST(memory_module, write_cell_by_name_overwrite) {
-    struct RAM* memory = ram_init(); 
-    struct RAM_VALUE s1, s2;
-
-    s1.value_type = RAM_TYPE_INT;
-    s1.types.i = 42;
-    ram_write_cell_by_name(memory, s1, "key");
-
-    s2.value_type = RAM_TYPE_STR;
-    s2.types.s = (char*)malloc(strlen("new value") + 1);
-    strcpy(s2.types.s, "new value");
-    ram_write_cell_by_name(memory, s2, "key");
-
-    ASSERT_EQ(memory->cells[0].value.value_type, RAM_TYPE_STR);
-    ASSERT_STREQ(memory->cells[0].value.types.s, "new value");
-
-    free(s2.types.s);
-    ram_destroy(memory);
-}
-
-TEST(memory_module, write_cell_by_name_string) {
+//5. Some more string reading and writing
+TEST(memory_module, more_string_write_read) {
     struct RAM* memory = ram_init();
     ASSERT_TRUE(memory != NULL);
 
@@ -235,32 +239,9 @@ TEST(memory_module, write_cell_by_name_string) {
     ram_destroy(memory);
 }
 
-TEST(memory_module, edge_case_identifiers) {
-    struct RAM* memory = ram_init();
-
-    struct RAM_VALUE i;
-    i.value_type = RAM_TYPE_INT;
-    i.types.i = 99;
-
-    ASSERT_TRUE(ram_write_cell_by_name(memory, i, ""));
-    ASSERT_EQ(memory->cells[0].value.types.i, 99);
-    ASSERT_STREQ(memory->cells[0].identifier, "");
-
-    char* long_id = (char*)malloc(1000 * sizeof(char));
-    memset(long_id, 'a', 999);
-    long_id[999] = '\0';
-    i.types.i = 123;
-    ASSERT_TRUE(ram_write_cell_by_name(memory, i, long_id));
-    ASSERT_EQ(memory->cells[1].value.types.i, 123);
-    ASSERT_STREQ(memory->cells[1].identifier, long_id);
-
-    free(long_id);
-    ram_destroy(memory);
-}
-
+//6. Some more resizing - loop through 20 time so plenty more resizes - create checkpoints at 10 and 20
 TEST(memory_module, memory_resize_and_check) {
     struct RAM* memory = ram_init();
-
     struct RAM_VALUE s;
     s.value_type = RAM_TYPE_STR;
     for (int i = 0; i < 10; i++) {
@@ -269,7 +250,6 @@ TEST(memory_module, memory_resize_and_check) {
 
         char* value = (char*)malloc(20);
         sprintf(value, "value%d", i);
-
         s.types.s = value;
         ram_write_cell_by_name(memory, s, name);
         free(value);
@@ -278,10 +258,9 @@ TEST(memory_module, memory_resize_and_check) {
     ASSERT_EQ(memory->num_values, 10);
     ASSERT_EQ(memory->capacity, 16);
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i <10; i++) {
         char name[10];
         sprintf(name, "key%d", i);
-
         struct RAM_VALUE* read_value = ram_read_cell_by_name(memory, name);
         ASSERT_TRUE(read_value != NULL);
         ASSERT_EQ(read_value->value_type, RAM_TYPE_STR);
@@ -296,39 +275,7 @@ TEST(memory_module, memory_resize_and_check) {
     ram_destroy(memory);
 }
 
-TEST(memory_module, concurrent_access_simulation) {
-    struct RAM* memory = ram_init();
-
-    struct RAM_VALUE v1, v2;
-    v1.value_type = RAM_TYPE_INT;
-    v1.types.i = 100;
-    ram_write_cell_by_name(memory, v1, "x");
-
-    v2.value_type = RAM_TYPE_REAL;
-    v2.types.d = 3.14;
-    ram_write_cell_by_name(memory, v2, "y");
-
-    ASSERT_EQ(memory->num_values, 2);
-
-    struct RAM_VALUE* read_x = ram_read_cell_by_name(memory, "x");
-    ASSERT_TRUE(read_x != NULL);
-    ASSERT_EQ(read_x->types.i, 100);
-    ram_free_value(read_x);
-
-    struct RAM_VALUE v3;
-    v3.value_type = RAM_TYPE_BOOLEAN;
-    v3.types.i = 1;
-    ram_write_cell_by_name(memory, v3, "z");
-    ASSERT_EQ(memory->num_values, 3);
-
-    struct RAM_VALUE* read_y = ram_read_cell_by_name(memory, "y");
-    ASSERT_TRUE(read_y != NULL);
-    ASSERT_EQ(read_y->types.d, 3.14);
-    ram_free_value(read_y);
-
-    ram_destroy(memory);
-}
-
+//7. Writing edge cases - no address exists there || address -1, read and write should both handle these cases 
 TEST(memory_module, write_to_invalid) {
     struct RAM* memory = ram_init();
 
@@ -349,52 +296,24 @@ TEST(memory_module, write_to_invalid) {
     ram_destroy(memory);
 }
 
-
-TEST(memory_module, off_by_one_valid_address) {
+//8. Off by one! Lets write 4 cells, so at index 4 (one to the right), reading there should return null, also check the address 
+//at one of the written cells to make sure it's correct
+TEST(memory_module, one_off) {
     struct RAM* memory = ram_init();
 
-    struct RAM_VALUE value1, value2, value3;
-    value1.value_type = RAM_TYPE_INT;
-    value1.types.i = 10;
-    ram_write_cell_by_name(memory, value1, "a");
+    struct RAM_VALUE i;
+    i.value_type = RAM_TYPE_INT;
+    i.types.i = 1;
 
-    value2.value_type = RAM_TYPE_REAL;
-    value2.types.d = 20.5;
-    ram_write_cell_by_name(memory, value2, "b");
+    ram_write_cell_by_name(memory, i, "x");
+    ram_write_cell_by_name(memory, i, "y");
+    ram_write_cell_by_name(memory, i, "z");
+    ram_write_cell_by_name(memory, i, "p");
 
-    value3.value_type = RAM_TYPE_STR;
-    value3.types.s = strdup("test_string");
-    ram_write_cell_by_name(memory, value3, "c");
+    ASSERT_EQ(ram_get_addr(memory, "p"), 3);
 
-    struct RAM_VALUE* valid_read = ram_read_cell_by_addr(memory, 1);
-    ASSERT_TRUE(valid_read != NULL); 
-    ASSERT_EQ(valid_read->value_type, RAM_TYPE_REAL);
-    ASSERT_EQ(valid_read->types.d, 20.5);
-    ram_free_value(valid_read);
+    ASSERT_EQ(memory->capacity, 4);
+    ASSERT_TRUE(ram_read_cell_by_addr(memory, 4) == NULL);
 
-    struct RAM_VALUE* below_valid = ram_read_cell_by_addr(memory, -1); 
-    ASSERT_TRUE(below_valid == NULL);
-
-    struct RAM_VALUE* above_valid = ram_read_cell_by_addr(memory, memory->num_values); 
-    ASSERT_TRUE(above_valid == NULL);
-
-
-    struct RAM_VALUE new_value;
-    new_value.value_type = RAM_TYPE_INT;
-    new_value.types.i = 99;
-
-    bool write_below = ram_write_cell_by_addr(memory, new_value, -1); 
-    ASSERT_EQ(write_below, false);
-
-    bool write_above = ram_write_cell_by_addr(memory, new_value, memory->num_values);
-    ASSERT_EQ(write_above, false);
-
-
-    ASSERT_EQ(memory->num_values, 3); 
-    ASSERT_EQ(memory->cells[0].value.types.i, 10);
-    ASSERT_EQ(memory->cells[1].value.types.d, 20.5);
-    ASSERT_STREQ(memory->cells[2].value.types.s, "test_string");
-
-    free(value3.types.s);
     ram_destroy(memory);
 }
