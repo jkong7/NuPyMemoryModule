@@ -1,9 +1,13 @@
+
 /*ram.c*/
 
 //
-// << DESCRIPTION >>
+// In this file, a RAM memory module is implemented that is meant to store nuPython variables and their values. 
+// It supports reading and writing of variables and handles memory allocation and deallocation. 
+// It uses dynamic memory allocation to handle resizing. 
+// The backbone of this memory module is a vector-like data structure where all the read, write, deleting, and resizing take place on. 
 //
-// << YOUR NAME >>
+// Jonathan Kong
 //
 // Template: Prof. Joe Hummel
 // Northwestern University
@@ -23,6 +27,70 @@
 // Public functions:
 //
 
+
+
+
+
+//Helper function to copy ram_value, used by the READ operations 
+struct RAM_VALUE* copy_ram_value(struct RAM_VALUE val) {
+  //First allocate space for the copy 
+  struct RAM_VALUE* copy = (struct RAM_VALUE*)malloc(sizeof(struct RAM_VALUE));
+
+  //Now move the fields of value_type and value from original to copy - value_type and actual value (enter conditionals to handle)
+  copy->value_type = val.value_type;
+  if (val.value_type==RAM_TYPE_INT || val.value_type==RAM_TYPE_PTR || val.value_type == RAM_TYPE_BOOLEAN) {
+    copy->types.i = val.types.i;
+  } else if (val.value_type==RAM_TYPE_REAL) {
+    copy->types.d=val.types.d; 
+  } else {
+    //Special case of string - need to malloc space for string and then copy original string over 
+    char* str = (char*)malloc((strlen(val.types.s)+1)*sizeof(char)); 
+    strcpy(str, val.types.s); 
+    copy->types.s=str; 
+    //copy->types.s=strdup(val.types.s);  achieves ^^ too, will use that everywhere else 
+  }
+  return copy; 
+}
+
+
+
+
+
+
+//Used purely by the incremental write operation (write_cell_by_name). This handles the doubling logic 
+//Here, the only thing we are messing with is the cells array. First allocate memory for it (2*capacity), then move over all the data from 
+//the old cells to the new one (identifier, value_type, and actual value, with strdup used with strings to handle both memory allocation and pointer return)
+//Then, FREE the old cells array (loop to free identifier AND string value case), then free the cells. Now, set cells of memory to the new cells and double
+//its capacity (num_values stays the same)
+void resize_ram(struct RAM* memory) {
+  struct RAM_CELL* new_cells = (struct RAM_CELL*)malloc(2*memory->capacity*sizeof(struct RAM_CELL)); 
+  for (int i=0; i<memory->capacity; i++) {
+    new_cells[i].identifier = strdup(memory->cells[i].identifier); 
+    new_cells[i].value.value_type = memory->cells[i].value.value_type;
+    if (memory->cells[i].value.value_type == RAM_TYPE_INT || memory->cells[i].value.value_type == RAM_TYPE_BOOLEAN || memory->cells[i].value.value_type == RAM_TYPE_PTR) {
+      new_cells[i].value.types.i = memory->cells[i].value.types.i;
+    } else if (memory->cells[i].value.value_type == RAM_TYPE_REAL) {
+      new_cells[i].value.types.d = memory->cells[i].value.types.d;
+    } else if (memory->cells[i].value.value_type == RAM_TYPE_STR) {
+      new_cells[i].value.types.s = strdup(memory->cells[i].value.types.s);
+    }  
+  }
+  for (int i=0; i<memory->capacity;i++) {
+    free(memory -> cells[i].identifier); 
+    if (memory->cells[i].value.value_type==RAM_TYPE_STR) {
+      free(memory->cells[i].value.types.s); 
+    } 
+  }
+  free(memory->cells);
+  memory->cells = new_cells;
+  memory->capacity *= 2;
+}
+
+
+
+
+
+
 //
 // ram_init
 //
@@ -32,8 +100,17 @@
 //
 struct RAM* ram_init(void)
 {
-  return NULL;
+  struct RAM* memory = (struct RAM*)malloc(sizeof(struct RAM)); //Allocate memeory for RAM* and return pointer to it 
+
+  //Set fields of memory (initialization, so num_values: 0, capacity: 4, and cells: pointer to malloced array of cells)
+  memory -> num_values = 0; 
+  memory -> capacity = 4; 
+  memory -> cells = (struct RAM_CELL*)malloc(memory->capacity*sizeof(struct RAM_CELL)); 
+  return memory; 
 }
+
+
+
 
 
 //
@@ -45,8 +122,20 @@ struct RAM* ram_init(void)
 //
 void ram_destroy(struct RAM* memory)
 {
-  return;
+  //free deallocates the memory block pointed by the given pointer, but does NOT recursively free memory that the contents may point to
+  //Therefore, all of these need to be explicitly freed since all nested inside larger vector DS: identifier, string if ram_type_str, cells, and finally whole block
+  for (int i=0; i<memory->num_values;i++) {
+    free(memory -> cells[i].identifier); 
+    if (memory->cells[i].value.value_type==RAM_TYPE_STR) {
+      free(memory->cells[i].value.types.s); 
+    } 
+  }
+  free(memory->cells); 
+  free(memory); 
 }
+
+
+
 
 
 //
@@ -64,8 +153,17 @@ void ram_destroy(struct RAM* memory)
 //
 int ram_get_addr(struct RAM* memory, char* identifier)
 {
+  for (int i=0; i<memory->num_values;i++) {
+    //Use strcmp to compare strings, simple loop to find index, -1 if not found
+    if (strcmp(memory->cells[i].identifier,identifier)==0) { 
+      return i; 
+    }
+  }
   return -1;
 }
+
+
+
 
 
 //
@@ -85,8 +183,19 @@ int ram_get_addr(struct RAM* memory, char* identifier)
 //
 struct RAM_VALUE* ram_read_cell_by_addr(struct RAM* memory, int address)
 {
-  return NULL;
+  //Handle out of bounds address
+  if (address >= memory->num_values || address < 0) {
+    return NULL;
+  }
+
+  //Find cell using input address index 
+  struct RAM_VALUE cell = memory->cells[address].value;
+
+  //Call helper function to copy the cell and return 
+  return copy_ram_value(cell); 
 }
+
+
 
 
 // 
@@ -102,8 +211,13 @@ struct RAM_VALUE* ram_read_cell_by_addr(struct RAM* memory, int address)
 //
 struct RAM_VALUE* ram_read_cell_by_name(struct RAM* memory, char* name)
 {
-  return NULL;
+  //Use ram_get_addr to return address given the name identifier 
+  int address = ram_get_addr(memory, name); 
+  //Use ram_read_cell_by_addr to handle making copy now that we have name identifier (also handle edge case name not contained)
+  return (address==-1) ? NULL : ram_read_cell_by_addr(memory, address); 
 }
+
+
 
 
 //
@@ -114,8 +228,17 @@ struct RAM_VALUE* ram_read_cell_by_name(struct RAM* memory, char* name)
 //
 void ram_free_value(struct RAM_VALUE* value)
 {
-  return;
+  //Idenfitier and value: free the dynamic memory (strings), which are ram_type_str case for value along with the identifier 
+  if (value == NULL) return;
+  //String case: have to explictiy free what pointer is pointing to (char*)
+  if (value->value_type==RAM_TYPE_STR) {
+    free(value->types.s); 
+  }
+  free(value);
 }
+
+
+
 
 
 //
@@ -136,8 +259,31 @@ void ram_free_value(struct RAM_VALUE* value)
 //
 bool ram_write_cell_by_addr(struct RAM* memory, struct RAM_VALUE value, int address)
 {
-  return false;
+  //Handle out of bounds cases
+  if (address>=memory->num_values || address < 0) {
+    return false; 
+  }
+
+  //This function is purely for OVERWRITING - if we got here, that means we are going to overwrite current cell 
+
+  //String case - need to explicitly deallocate memory first 
+  if (memory->cells[address].value.value_type==RAM_TYPE_STR) {
+    free(memory->cells[address].value.types.s); 
+  } 
+  //Overwrite: 
+  memory -> cells[address].value.value_type = value.value_type;
+  if (value.value_type == RAM_TYPE_INT || value.value_type == RAM_TYPE_BOOLEAN || value.value_type == RAM_TYPE_PTR) {
+    memory -> cells[address].value.types.i = value.types.i;
+  } else if (value.value_type == RAM_TYPE_REAL) {
+    memory -> cells[address].value.types.d = value.types.d;
+  } else if (value.value_type == RAM_TYPE_STR) {
+    memory -> cells[address].value.types.s = strdup(value.types.s); //strdup mallocs memory and returns pointer, conveniant! 
+  }  
+  return true; 
 }
+
+
+
 
 
 //
@@ -157,8 +303,41 @@ bool ram_write_cell_by_addr(struct RAM* memory, struct RAM_VALUE value, int addr
 //
 bool ram_write_cell_by_name(struct RAM* memory, struct RAM_VALUE value, char* name)
 {
-  return false;
+  //First get the index using ram_get_addr
+  int address = ram_get_addr(memory, name);
+
+  //If cell with name already exists in memory, nothing fancy, just overwrite using write_cell_by_addr! 
+  if (address!=-1) {
+    ram_write_cell_by_addr(memory, value, address); 
+    return true; 
+  } 
+
+  //Otherwise: We have to create a new cell at index num-values (0 indexed so num-values represents "next" cell)
+
+  //Here is where we have to first check if we need to double 
+  if (memory->capacity==memory->num_values) {
+    resize_ram(memory); 
+  }
+
+  //Put the fields in, for identifier - strdup to handle memory allocation and pointer return at once, for actual value - enter conditionals 
+  memory -> cells[memory->num_values].identifier = strdup(name); 
+  memory -> cells[memory->num_values].value.value_type = value.value_type;
+  if (value.value_type == RAM_TYPE_INT || value.value_type == RAM_TYPE_BOOLEAN || value.value_type == RAM_TYPE_PTR) {
+    memory -> cells[memory->num_values].value.types.i = value.types.i;
+  } else if (value.value_type == RAM_TYPE_REAL) {
+    memory -> cells[memory->num_values].value.types.d = value.types.d;
+  } else if (value.value_type == RAM_TYPE_STR) {
+    memory -> cells[memory->num_values].value.types.s = strdup(value.types.s);
+  } 
+
+  //num_values incremented as a new value was written
+  memory->num_values+=1; 
+  
+  return true; 
 }
+
+
+
 
 
 //
@@ -170,24 +349,41 @@ void ram_print(struct RAM* memory)
 {
   printf("**MEMORY PRINT**\n");
 
-  //printf("Capacity: %d\n", ?);
-  //printf("Num values: %d\n", ?);
-  //printf("Contents:\n");
+  printf("Capacity: %d\n", memory->capacity);
+  printf("Num values: %d\n", memory->num_values);
+  printf("Contents:\n");
 
-  //for (int i = 0; i < ?; i++)
-  //{
-      //printf(" %d: %s, ", i, <<identifier>>);
+  //Use switch to handle conditional printing logic 
+  for (int i = 0; i < memory->num_values; i++)
+  {
+      printf(" %d: %s, ", i, memory->cells[i].identifier);
+      switch (memory->cells[i].value.value_type) {
+        case RAM_TYPE_INT: 
+          printf("int, %d", memory->cells[i].value.types.i);
+          break;
+        case RAM_TYPE_REAL:
+          printf("real, %lf", memory->cells[i].value.types.d);
+          break;
+        case RAM_TYPE_STR:
+          printf("str, '%s'", memory->cells[i].value.types.s);
+          break; 
+        case RAM_TYPE_PTR: 
+          printf("ptr, %d", memory->cells[i].value.types.i);
+          break; 
+        case RAM_TYPE_BOOLEAN: 
+          if (memory->cells[i].value.types.i == 0) {
+            printf("boolean, False");
+          } else {
+            printf("boolean, True");
+          }
+          break; 
+        default: 
+          printf("none, None");
+          break; 
+      }
 
-      //printf("int, %d", ?);
-      //printf("real, %lf", ?);
-      //printf("str, '%s'", ?);
-      //printf("ptr, %d", ?);
-      //printf("boolean, False");
-      //printf("boolean, True");
-      //printf("none, None");
-
-  //  printf("\n");
-  //}
+      printf("\n");
+  }
 
   printf("**END PRINT**\n");
 }
