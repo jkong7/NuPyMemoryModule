@@ -239,43 +239,7 @@ TEST(memory_module, more_string_write_read) {
     ram_destroy(memory);
 }
 
-//6. Some more resizing - loop through 20 time so plenty more resizes - create checkpoints at 10 and 20
-TEST(memory_module, memory_resize_and_check) {
-    struct RAM* memory = ram_init();
-    struct RAM_VALUE s;
-    s.value_type = RAM_TYPE_STR;
-    for (int i = 0; i < 10; i++) {
-        char name[10];
-        sprintf(name, "key%d", i);
-
-        char* value = (char*)malloc(20);
-        sprintf(value, "value%d", i);
-        s.types.s = value;
-        ram_write_cell_by_name(memory, s, name);
-        free(value);
-    }
-
-    ASSERT_EQ(memory->num_values, 10);
-    ASSERT_EQ(memory->capacity, 16);
-
-    for (int i = 0; i <10; i++) {
-        char name[10];
-        sprintf(name, "key%d", i);
-        struct RAM_VALUE* read_value = ram_read_cell_by_name(memory, name);
-        ASSERT_TRUE(read_value != NULL);
-        ASSERT_EQ(read_value->value_type, RAM_TYPE_STR);
-
-        char expected[20];
-        sprintf(expected, "value%d", i);
-        ASSERT_TRUE(strcmp(read_value->types.s, expected) == 0);
-
-        ram_free_value(read_value);
-    }
-
-    ram_destroy(memory);
-}
-
-//7. Writing edge cases - no address exists there || address -1, read and write should both handle these cases 
+//6. Writing edge cases - no address exists there || address -1, read and write should both handle these cases 
 TEST(memory_module, write_to_invalid) {
     struct RAM* memory = ram_init();
 
@@ -296,7 +260,7 @@ TEST(memory_module, write_to_invalid) {
     ram_destroy(memory);
 }
 
-//8. Off by one! Lets write 4 cells, so at index 4 (one to the right), reading there should return null, also check the address 
+//7. Off by one! Lets write 4 cells, so at index 4 (one to the right), reading there should return null, also check the address 
 //at one of the written cells to make sure it's correct
 TEST(memory_module, one_off) {
     struct RAM* memory = ram_init();
@@ -314,6 +278,56 @@ TEST(memory_module, one_off) {
 
     ASSERT_EQ(memory->capacity, 4);
     ASSERT_TRUE(ram_read_cell_by_addr(memory, 4) == NULL);
+
+    ram_destroy(memory);
+}
+
+//8. Doubling->writing, doubling, reading + one off
+TEST(memory_module, detect_holes_after_resize)
+{
+    struct RAM* memory = ram_init();
+
+    struct RAM_VALUE val;
+    val.value_type = RAM_TYPE_INT;
+
+    for (int i = 0; i < 4; i++) {
+        val.types.i = i + 1;
+        char name[2];
+        name[0] = 'a' + i;
+        name[1] = '\0';
+
+        ASSERT_TRUE(ram_write_cell_by_name(memory, val, name));
+    }
+
+    val.types.i = 99;
+    ASSERT_TRUE(ram_write_cell_by_name(memory, val, "resize"));
+
+    ASSERT_EQ(memory->capacity, 8);
+    ASSERT_EQ(memory->num_values, 5);
+
+    for (int i = 0; i < 5; i++) {
+        struct RAM_VALUE* read_val = ram_read_cell_by_addr(memory, i);
+        ASSERT_TRUE(read_val != NULL);
+        if (i < 4) {
+            ASSERT_EQ(read_val->value_type, RAM_TYPE_INT);
+            ASSERT_EQ(read_val->types.i, i + 1);
+        } else {
+            ASSERT_EQ(read_val->value_type, RAM_TYPE_INT);
+            ASSERT_EQ(read_val->types.i, 99);
+        }
+        ram_free_value(read_val);
+    }
+
+    for (int i = 5; i < memory->capacity; i++) {
+        struct RAM_VALUE* invalid_read = ram_read_cell_by_addr(memory, i);
+        ASSERT_TRUE(invalid_read == NULL);
+    }
+
+    ASSERT_STREQ(memory->cells[0].identifier, "a");
+    ASSERT_STREQ(memory->cells[1].identifier, "b");
+    ASSERT_STREQ(memory->cells[2].identifier, "c");
+    ASSERT_STREQ(memory->cells[3].identifier, "d");
+    ASSERT_STREQ(memory->cells[4].identifier, "resize");
 
     ram_destroy(memory);
 }
